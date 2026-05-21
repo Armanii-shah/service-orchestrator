@@ -25,14 +25,26 @@ class ProviderAgent:
         
         return round(R * c, 2)
 
-    def execute(self, service_type: str, user_coords: dict, requested_time: str, city: str = "unknown") -> dict:
+    def execute(self, service_type: str, user_coords: dict, requested_time: str, city: str = "unknown", urgency: str = "medium") -> dict:
         """
         Executes the agent's logic to find and rank the best service providers.
+        Urgency level adjusts the scoring weights:
+          - high:   Distance 50%, Availability 30%, Rating 20%  (speed matters most)
+          - medium: Distance 40%, Rating 40%, Availability 20%  (balanced)
+          - low:    Rating 50%, Distance 30%, Availability 20%  (quality matters most)
         """
         timestamp = datetime.now().isoformat()
         
         user_lat = user_coords.get("lat")
         user_lng = user_coords.get("lng")
+
+        # Dynamic weights based on urgency
+        if urgency == "high":
+            w_dist, w_rating, w_avail = 50, 20, 30
+        elif urgency == "low":
+            w_dist, w_rating, w_avail = 30, 50, 20
+        else:  # medium / normal
+            w_dist, w_rating, w_avail = 40, 40, 20
         
         # 1. Filter providers by required service and city
         matching_providers = [p for p in self.providers_db if p.get("service") == service_type]
@@ -46,26 +58,29 @@ class ProviderAgent:
             # Calculate distance
             dist_km = self.calculate_distance(user_lat, user_lng, provider["lat"], provider["lng"])
             
-            # Distance Score (Max 40)
-            # Closer providers get higher scores. If distance > 20km, score is 0.
-            distance_score = max(0, 40 - (dist_km * 2))
+            # Distance Score — scaled to weight
+            distance_score = max(0, w_dist - (dist_km * (w_dist / 20)))
             
-            # Rating Score (Max 40)
+            # Rating Score — scaled to weight
             rating = provider.get("rating", 0.0)
-            rating_score = (rating / 5.0) * 40
+            rating_score = (rating / 5.0) * w_rating
             
-            # Availability Score (Max 20)
-            # In a real app, we would check if `requested_time` overlaps with `available_slots`.
-            # For this MVP, we verify if they are active/available.
+            # Availability Score — scaled to weight
             is_available = provider.get("available", False)
-            availability_score = 20 if is_available else 0
+            availability_score = w_avail if is_available else 0
             
             # Total Score (Max 100)
             total_score = distance_score + rating_score + availability_score
             
             # Construct human-readable reasoning for the user UI
-            dist_text = "Very close" if dist_km < 3 else "Nearby" if dist_km < 10 else "Further away"
-            reasoning_ui = f"{dist_text} ({dist_km}km). Rating: {rating}. Availability: {'Yes' if is_available else 'No'}."
+            dist_label = "Very close" if dist_km < 3 else "Nearby" if dist_km < 10 else "Further away"
+            urgency_note = " Prioritised for fast response due to high urgency." if urgency == "high" else ""
+            reasoning_ui = (
+                f"{dist_label} ({dist_km} km away). "
+                f"Rating: ⭐{rating}/5. "
+                f"Available: {'Yes' if is_available else 'No'}."
+                f"{urgency_note}"
+            )
             
             ranked_providers.append({
                 "id": provider["id"],
@@ -74,7 +89,7 @@ class ProviderAgent:
                 "rating": rating,
                 "score": round(total_score, 1),
                 "reasoning": reasoning_ui,
-                "_debug_math": f"Dist_Score: {round(distance_score, 1)}, Rating_Score: {round(rating_score, 1)}, Avail: {availability_score}"
+                "_debug_math": f"Urgency={urgency}. Weights: dist={w_dist}, rating={w_rating}, avail={w_avail}. Dist_Score={round(distance_score,1)}, Rating_Score={round(rating_score,1)}, Avail={availability_score}"
             })
 
         # 3. Sort providers by total score descending
@@ -103,7 +118,7 @@ class ProviderAgent:
             best_match = top_3[0]
             decision = "Success: Return top 3 providers sorted by score"
             reasoning_log = (f"Found {len(matching_providers)} providers. Top match '{best_match['name']}' "
-                             f"with score {best_match['score']}. Math: {best_match['_debug_math']}")
+                             f"with score {best_match['score']}. {best_match['_debug_math']}")
             
             # Remove debug math before sending to user
             for p in top_3:
@@ -116,7 +131,7 @@ class ProviderAgent:
         agent_log = {
             "timestamp": timestamp,
             "agent_name": self.agent_name,
-            "input": json.dumps({"service": service_type, "lat": user_lat, "lng": user_lng, "time": requested_time}),
+            "input": json.dumps({"service": service_type, "lat": user_lat, "lng": user_lng, "time": requested_time, "urgency": urgency}),
             "reasoning": reasoning_log,
             "tool_used": tool_used,
             "tool_input": tool_input,

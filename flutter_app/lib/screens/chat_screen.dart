@@ -148,6 +148,7 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
   String? _lastService;
   String? _lastCity;
   bool _awaitingArea = false;
+  bool _awaitingCity = false;
   
   @override
   void initState() {
@@ -197,7 +198,16 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
       String agentReply = "I am processing your request...";
       bool isError = false;
       
-      if (response['status'] == 'need_area') {
+      if (response['status'] == 'need_city') {
+        agentReply = response['message'] ?? "Which city?";
+        if (mounted) {
+          setState(() {
+            _lastService = response['service'];
+            _awaitingCity = true;
+            _awaitingArea = false;
+          });
+        }
+      } else if (response['status'] == 'need_area') {
         // Bot is asking for the area — show clarification message + chips
         agentReply = response['message'] ?? "Pehle area select karein.";
         if (mounted) {
@@ -213,6 +223,7 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
         if (mounted) {
           setState(() {
             _awaitingArea = false;
+            _awaitingCity = false;
             _lastService = null;
             _lastCity = null;
           });
@@ -300,102 +311,198 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
 
   void _showFakeBookingConfirmationDialog(ProviderModel provider, Map<String, dynamic> contextData) {
     final serviceDetails = contextData['service_details'] ?? {};
-    final service = serviceDetails['service'] ?? 'Service';
+    final service = serviceDetails['service'] ?? 'service';
     final now = DateTime.now();
-    final randId = "SRV-${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}-${DateTime.now().millisecondsSinceEpoch.toString().substring(9)}";
-    
+    final randId = "SRV-${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}-${now.millisecondsSinceEpoch.toString().substring(9)}";
+
+    // Schedule times
+    final slotTime = DateTime(now.year, now.month, now.day + 1, 9, 0);
+    final reminderTime = slotTime.subtract(Duration(hours: 1));
+    final slotFormatted = "Tomorrow, ${slotTime.hour}:${slotTime.minute.toString().padLeft(2,'0')} AM";
+    final reminderFormatted = "${reminderTime.day}/${reminderTime.month} at ${reminderTime.hour}:${reminderTime.minute.toString().padLeft(2,'0')}";
+
+    final serviceLabel = service.toString().replaceAll('_', ' ');
+    final capitalService = serviceLabel[0].toUpperCase() + serviceLabel.substring(1);
+
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
           contentPadding: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          content: Container(
-            width: double.maxFinite,
-            padding: EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.check_circle, color: Colors.green, size: 28),
-                    SizedBox(width: 8),
-                    Text("Booking Confirmed!", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green[700])),
-                  ],
-                ),
-                SizedBox(height: 16),
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(8)),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          content: SingleChildScrollView(
+            child: Container(
+              width: double.maxFinite,
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Row(
                     children: [
-                      Row(
+                      Container(
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Color(0xFF48BB78).withOpacity(0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.check_circle_rounded, color: Color(0xFF38A169), size: 28),
+                      ),
+                      SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.sms, color: Colors.blue, size: 16),
-                          SizedBox(width: 4),
-                          Text("SMS Sent!", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue[800])),
+                          Text("Booking Confirmed!", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF276749))),
+                          Text("ID: $randId", style: TextStyle(fontSize: 11, color: Colors.grey[600], fontFamily: 'monospace')),
                         ],
                       ),
-                      SizedBox(height: 4),
-                      Text("To: 0300XXXXXXX (You)", style: TextStyle(fontSize: 12, color: Colors.blue[800])),
-                      Text("To: 0321XXXXXXX (Provider)", style: TextStyle(fontSize: 12, color: Colors.blue[800])),
                     ],
                   ),
-                ),
-                SizedBox(height: 16),
-                Text("Booking ID: $randId", style: TextStyle(fontWeight: FontWeight.bold)),
-                Text("Service: ${service[0].toUpperCase()}${service.substring(1)}"),
-                Text("Provider: ${provider.name}"),
-                Text("Date: Tomorrow, 2:00 PM"),
-                SizedBox(height: 20),
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Divider(color: Colors.grey[300], thickness: 2),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Icon(Icons.circle, color: Colors.green, size: 16),
-                        Icon(Icons.circle, color: Colors.orange, size: 16),
-                        Icon(Icons.circle, color: Colors.grey[300], size: 16),
-                        Icon(Icons.circle, color: Colors.grey[300], size: 16),
-                        Icon(Icons.circle, color: Colors.grey[300], size: 16),
-                      ],
-                    )
-                  ],
-                ),
-                SizedBox(height: 8),
-                Center(child: Text("Status: Provider notified", style: TextStyle(color: Colors.orange[700], fontWeight: FontWeight.bold))),
-                SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      child: Text("Close", style: TextStyle(color: Colors.grey)),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF075E54), foregroundColor: Colors.white),
-                      child: Text("View in Chat"),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        setState(() {
-                          _messages.add(ChatMessage(
-                            text: "✅ Booking confirmed! ID: $randId\n📱 SMS sent to you and provider\n⏰ Provider will arrive tomorrow at 2:00 PM",
-                            isUser: false,
-                          ));
-                        });
-                      },
-                    )
-                  ],
-                )
-              ],
+                  SizedBox(height: 16),
+                  Divider(color: Colors.grey[200]),
+                  SizedBox(height: 8),
+                  // Booking details
+                  _dialogRow(Icons.build_circle_outlined, "Service", capitalService, Colors.blue[700]!),
+                  SizedBox(height: 8),
+                  _dialogRow(Icons.person_pin_rounded, "Provider", provider.name, Colors.purple[700]!),
+                  SizedBox(height: 8),
+                  _dialogRow(Icons.schedule_rounded, "Scheduled", slotFormatted, Colors.orange[700]!),
+                  SizedBox(height: 16),
+                  Divider(color: Colors.grey[200]),
+                  SizedBox(height: 8),
+                  // Simulated SMS
+                  Text("📱 Simulated Notifications Sent", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF2D3748))),
+                  SizedBox(height: 8),
+                  _smsLog("To You (0300-XXXXXXX)", "Booking $randId confirmed. ${provider.name} will arrive $slotFormatted."),
+                  SizedBox(height: 6),
+                  _smsLog("To Provider (${provider.phone})", "New job $randId. Location: ${serviceDetails['location'] ?? 'Shared'}. Time: $slotFormatted."),
+                  SizedBox(height: 16),
+                  Divider(color: Colors.grey[200]),
+                  SizedBox(height: 8),
+                  // Follow-up reminders
+                  Text("⏰ Follow-Up Reminders Scheduled", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF2D3748))),
+                  SizedBox(height: 8),
+                  _reminderRow("1 hour before appointment", reminderFormatted, true),
+                  SizedBox(height: 6),
+                  _reminderRow("Completion confirmation", "After service done", false),
+                  SizedBox(height: 20),
+                  // Status stepper
+                  Row(
+                    children: [
+                      _statusStep("Booked", true, Colors.green),
+                      Expanded(child: Container(height: 2, color: Colors.orange[300])),
+                      _statusStep("Notified", true, Colors.orange),
+                      Expanded(child: Container(height: 2, color: Colors.grey[300])),
+                      _statusStep("En Route", false, Colors.grey[400]!),
+                      Expanded(child: Container(height: 2, color: Colors.grey[300])),
+                      _statusStep("Done", false, Colors.grey[400]!),
+                    ],
+                  ),
+                  SizedBox(height: 20),
+                  // Action buttons
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        child: Text("Close", style: TextStyle(color: Colors.grey)),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                      SizedBox(width: 8),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2C5282),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        child: Text("View in Chat"),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          setState(() {
+                            _messages.add(ChatMessage(
+                              text: "✅ Booking Confirmed!\n🆔 ID: $randId\n👤 Provider: ${provider.name}\n⏰ Scheduled: $slotFormatted\n📱 SMS sent to you & provider\n🔔 Reminder set for $reminderFormatted",
+                              isUser: false,
+                            ));
+                          });
+                          _scrollToBottom();
+                        },
+                      )
+                    ],
+                  )
+                ],
+              ),
             ),
           ),
         );
       }
+    );
+  }
+
+  Widget _dialogRow(IconData icon, String label, String value, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        SizedBox(width: 8),
+        Text("$label: ", style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+        Expanded(child: Text(value, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis)),
+      ],
+    );
+  }
+
+  Widget _smsLog(String recipient, String message) {
+    return Container(
+      padding: EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Color(0xFFEBF8FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Color(0xFF90CDF4), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.sms_rounded, size: 13, color: Colors.blue[700]),
+              SizedBox(width: 4),
+              Text(recipient, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.blue[800])),
+            ],
+          ),
+          SizedBox(height: 3),
+          Text(message, style: TextStyle(fontSize: 11, color: Colors.blue[900])),
+        ],
+      ),
+    );
+  }
+
+  Widget _reminderRow(String label, String time, bool sent) {
+    return Row(
+      children: [
+        Icon(sent ? Icons.alarm_on_rounded : Icons.alarm_rounded, size: 16, color: sent ? Colors.orange : Colors.grey),
+        SizedBox(width: 8),
+        Expanded(child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+        Container(
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: sent ? Colors.orange[50] : Colors.grey[100],
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: sent ? Colors.orange[200]! : Colors.grey[300]!, width: 1),
+          ),
+          child: Text(time, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: sent ? Colors.orange[800] : Colors.grey[600])),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusStep(String label, bool active, Color color) {
+    return Column(
+      children: [
+        Container(
+          width: 14, height: 14,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        SizedBox(height: 2),
+        Text(label, style: TextStyle(fontSize: 9, color: color, fontWeight: active ? FontWeight.bold : FontWeight.normal)),
+      ],
     );
   }
 
@@ -456,6 +563,13 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
           ],
           
           if (message.contextData != null &&
+              message.contextData!['suggested_cities'] != null &&
+              (message.contextData!['suggested_cities'] as List).isNotEmpty) ...[
+            SizedBox(height: 8),
+            _buildQuickSelectCities(message.contextData!['suggested_cities']),
+          ],
+          
+          if (message.contextData != null &&
               message.contextData!['suggested_areas'] != null &&
               (message.contextData!['suggested_areas'] as List).isNotEmpty) ...[
             SizedBox(height: 8),
@@ -468,6 +582,40 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildQuickSelectCities(List<dynamic> cities) {
+    if (cities.isEmpty) return SizedBox.shrink();
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: cities.map((city) {
+        return InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () {
+            _sendMessage(overrideText: city.toString());
+          },
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF4C51BF), Color(0xFF553C9A)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(color: Color(0xFF4C51BF).withOpacity(0.35), blurRadius: 8, offset: Offset(0, 3))
+              ],
+            ),
+            child: Text(
+              city.toString(),
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -612,7 +760,30 @@ class _ChatTabState extends State<ChatTab> with SingleTickerProviderStateMixin {
                             ),
                           ],
                         ),
-                        SizedBox(height: 16),
+                        SizedBox(height: 10),
+                        // Reasoning chip — shows WHY this provider was recommended
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Color(0xFFF0FFF4),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Color(0xFF9AE6B4), width: 1),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.lightbulb_outline_rounded, size: 14, color: Color(0xFF38A169)),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  provider.reasoning.isNotEmpty ? provider.reasoning : "Best match for your location.",
+                                  style: TextStyle(fontSize: 12, color: Color(0xFF276749), height: 1.4),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                         Container(
                           width: double.infinity,
                           height: 44,

@@ -32,6 +32,7 @@ Extract the following:
 3. "area": The local area or landmark if mentioned (e.g., "DHA", "Johar Town", "G-13", "Clifton", "Gulberg"), or null.
 4. "urgency": "high" if emergency words like 'jaldi', 'urgently', 'emergency', 'pani beh raha hai', 'short circuit' are present; otherwise "medium" or "low".
 5. "confidence": Score between 0.0 and 1.0.
+6. "language": Detect which language the user wrote in. Return "english" if the message is in English, "roman_urdu" if written in Roman script Urdu/Urdu words using English letters, or "urdu" if written in Urdu script.
 
 Rules:
 - Respond ONLY with the JSON object. Do not include markdown code blocks.
@@ -43,7 +44,8 @@ JSON Schema:
   "city": "karachi|lahore|islamabad|rawalpindi|faisalabad|null",
   "area": "string|null",
   "urgency": "low|medium|high",
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "language": "english|roman_urdu|urdu"
 }}
 
 User Message: "{user_input}"

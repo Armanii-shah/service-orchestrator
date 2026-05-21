@@ -250,9 +250,22 @@ class IntentAgent:
             matched_keyword = service_data["matched_keyword"]
             all_scores = service_data.get("all_scores", {})
                     
-            # Step 3: Extract Location
-            extracted_location = None
+            # Step 3: Extract City from message keywords
             extracted_city = None
+            city_keywords = {
+                "karachi": ["karachi", "khi", "karaci"],
+                "lahore": ["lahore", "lhr", "lahour"],
+                "islamabad": ["islamabad", "isb", "islmabad"],
+                "rawalpindi": ["rawalpindi", "pindi", "rwp", "rawlpindi"],
+                "faisalabad": ["faisalabad", "fsd", "lyallpur"]
+            }
+            for city_name, aliases in city_keywords.items():
+                if any(alias in text_lower for alias in aliases):
+                    extracted_city = city_name
+                    break
+
+            # Step 4: Extract Area/Location
+            extracted_location = None
             location_confidence_bonus = 0.0
             
             # Pre-process text to convert things like "g 13" to "g-13"
@@ -342,32 +355,52 @@ class IntentAgent:
         decision = "Proceed"
         output_data = {}
         
-        preferred_city = user_details.get("preferred_city") if user_details else None
-        # Let Gemini detected city override preferred_city if available
+        # Detect language from the message text
+        detected_language = "roman_urdu"
+        if language == "English":
+            detected_language = "english"
+        
+        # Helper for language-aware messages
+        def t(en_text, ru_text):
+            return en_text if detected_language == "english" else ru_text
+        
+        # NOTE: preferred_city from profile is NOT used to skip city question.
+        # Only use extracted_city found in THIS message.
+        extracted_city_from_msg = None
         if 'extracted_city' in locals() and extracted_city:
-            preferred_city = extracted_city
-        elif gemini_data and gemini_data.get("city"):
-            g_city = gemini_data.get("city")
-            if g_city != "null" and g_city:
-                preferred_city = g_city
+            extracted_city_from_msg = extracted_city
+        elif gemini_data and gemini_data.get("city") and gemini_data.get("city") != "null":
+            extracted_city_from_msg = gemini_data.get("city")
+        
+        ALL_CITIES = ["Karachi", "Lahore", "Islamabad", "Rawalpindi", "Faisalabad"]
         
         if not extracted_service:
             decision = "Error: Missing Service"
             output_data = {
                 "error": "Service not detected",
-                "clarification": "Aapko konsi service chahiye? Plumber, Electrician, AC, Carpenter, ya Painter?"
+                "clarification": t(
+                    "Which service do you need? Plumber, Electrician, AC Technician, Carpenter, or Painter?",
+                    "Aapko konsi service chahiye? Plumber, Electrician, AC, Carpenter, ya Painter?"
+                )
             }
-        elif not extracted_location and not preferred_city:
-            decision = "Error: Missing Location"
+        elif not extracted_city_from_msg:
+            # City not mentioned in message → ALWAYS ask for city first
+            decision = "Error: Missing City"
             output_data = {
-                "error": "Location not detected",
-                "clarification": "Aap ka area konsa hai? (e.g., G-13, Johar Town, DHA)"
+                "error": "Missing City",
+                "clarification": t(
+                    "Which city do you need the service in?",
+                    "Aap kaunse sheher mein hain?"
+                ),
+                "suggested_cities": ALL_CITIES,
+                "service": extracted_service,
+                "language": detected_language
             }
-        elif not extracted_location and preferred_city:
-            # We have a city, but no local area! We MUST ask for the area.
+        elif not extracted_location:
+            # City known from message, but no area → ask for area
             decision = "Error: Missing Area"
             popular_areas = []
-            city_lower = preferred_city.lower()
+            city_lower = extracted_city_from_msg.lower()
             if city_lower == "karachi": popular_areas = ["DHA", "Malir", "Chorangi", "Gulshan-e-Iqbal", "Clifton", "Nazimabad", "Korangi", "North Karachi", "Other"]
             elif city_lower == "lahore": popular_areas = ["Johar Town", "DHA", "Gulberg", "Model Town", "Wapda Town", "Garden Town", "Defence", "Other"]
             elif city_lower == "islamabad": popular_areas = ["G-13", "F-10", "Blue Area", "I-8", "G-11", "F-7", "E-11", "Other"]
@@ -377,19 +410,21 @@ class IntentAgent:
             
             output_data = {
                 "error": "Missing Area",
-                "clarification": "Pehle area select karein. " + preferred_city.title() + " ke kaunse area mein chahiye?",
+                "clarification": t(
+                    f"Which area of {extracted_city_from_msg.title()} do you need the service in?",
+                    f"Pehle area select karein. {extracted_city_from_msg.title()} ke kaunse area mein chahiye?"
+                ),
                 "suggested_areas": popular_areas,
-                "city": preferred_city,
+                "city": extracted_city_from_msg,
                 "service": extracted_service,
-                "matched_keyword": matched_keyword,
-                "all_scores": all_scores
+                "language": detected_language
             }
             
-        if not output_data and confidence < 0.6 and not preferred_city:
+        if not output_data and confidence < 0.6 and not extracted_city_from_msg:
             decision = "Error: Low Confidence"
             output_data = {
                 "error": "Low confidence",
-                "clarification": "Kya aap repeat kar sakte hain?"
+                "clarification": t("Could you please repeat that?", "Kya aap repeat kar sakte hain?")
             }
         elif not output_data:
             decision = "Success: Intent Extracted"
@@ -400,7 +435,9 @@ class IntentAgent:
                 "urgency": urgency,
                 "confidence": confidence,
                 "matched_keyword": matched_keyword,
-                "all_scores": all_scores
+                "all_scores": all_scores,
+                "detected_city": extracted_city_from_msg,
+                "language": detected_language
             }
             
         # Step 8: Construct and return standardized Agent Log format

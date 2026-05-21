@@ -150,8 +150,10 @@ class OrchestratorResponse(BaseModel):
     trace: Optional[List[Dict[str, Any]]] = None
     # Location / area flow
     suggested_areas: Optional[List[str]] = None
+    suggested_cities: Optional[List[str]] = None   # NEW: city selection chips
     city: Optional[str] = None
     service: Optional[str] = None
+    language: Optional[str] = None                 # NEW: detected user language
     # Provider display
     providers: Optional[List[Dict[str, Any]]] = None
     service_details: Optional[Dict[str, Any]] = None

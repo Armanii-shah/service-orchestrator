@@ -31,6 +31,7 @@ class ProviderModel {
   final double rating;
   final double score;
   final String reasoning;
+  final String phone;
 
   ProviderModel({
     required this.id,
@@ -39,6 +40,7 @@ class ProviderModel {
     required this.rating,
     required this.score,
     required this.reasoning,
+    this.phone = '',
   });
 
   factory ProviderModel.fromJson(Map<String, dynamic> json) {
@@ -49,6 +51,7 @@ class ProviderModel {
       rating: (json['rating'] ?? 0).toDouble(),
       score: (json['score'] ?? 0).toDouble(),
       reasoning: json['reasoning'] ?? '',
+      phone: json['phone'] ?? '0300-XXXXXXX',
     );
   }
 }

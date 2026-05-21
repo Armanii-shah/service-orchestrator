@@ -83,15 +83,17 @@ class ServiceOrchestrator:
             }
         
         # ==========================================
-        # CONTEXT-AWARE BYPASS (Awaiting Area)
+        # CONTEXT-AWARE BYPASS (Awaiting Area / City)
         # ==========================================
         user_id = user_details.get("user_id", "unknown")
         user_context = self.USER_SESSIONS.get(user_id, {})
         
         prev_service = user_context.get("service")
         prev_city = user_context.get("city")
+        prev_status = user_context.get("status")
+        prev_language = user_context.get("language", "roman_urdu")
         
-        if user_context.get("status") == "awaiting_area" and prev_service and prev_city and not selected_provider_id:
+        if prev_status == "awaiting_area" and prev_service and prev_city and not selected_provider_id:
             # Clear context so it doesn't loop infinitely
             self.USER_SESSIONS[user_id] = {}
             
@@ -100,11 +102,12 @@ class ServiceOrchestrator:
             
             intent_out = {
                 "service_type": prev_service,
-                "location": area_str,          # ← correct key, used by line 234
-                "detected_city": prev_city,    # ← carry city forward for ProviderAgent
+                "location": area_str,
+                "detected_city": prev_city,
                 "time": "immediate",
                 "urgency": "normal",
-                "confidence": 1.0
+                "confidence": 1.0,
+                "language": prev_language
             }
             self.execution_log.append({
                 "timestamp": datetime.now().isoformat(),
@@ -117,6 +120,56 @@ class ServiceOrchestrator:
                 "decision": "Bypass Intent Agent",
                 "output": intent_out
             })
+        
+        elif prev_status == "awaiting_city" and prev_service and not selected_provider_id:
+            # User just tapped a city chip — use that as the city, then ask for area
+            self.USER_SESSIONS[user_id] = {}
+            city_input = user_input.strip().lower()
+            
+            if city_input in ["karachi", "lahore", "islamabad", "rawalpindi", "faisalabad"]:
+                if city_input == "karachi": popular_areas = ["DHA", "Malir", "Chorangi", "Gulshan-e-Iqbal", "Clifton", "Nazimabad", "Korangi", "North Karachi", "Other"]
+                elif city_input == "lahore": popular_areas = ["Johar Town", "DHA", "Gulberg", "Model Town", "Wapda Town", "Garden Town", "Defence", "Other"]
+                elif city_input == "islamabad": popular_areas = ["G-13", "F-10", "Blue Area", "I-8", "G-11", "F-7", "E-11", "Other"]
+                elif city_input == "rawalpindi": popular_areas = ["Saddar", "Satellite Town", "Chaklala", "Westridge", "Murree Road", "Other"]
+                elif city_input == "faisalabad": popular_areas = ["Madina Town", "Jinnah Colony", "Peoples Colony", "Gulberg", "Other"]
+                
+                area_msg = (
+                    f"Which area of {city_input.title()} do you need the service in?"
+                    if prev_language == "english" else
+                    f"Pehle area select karein. {city_input.title()} ke kaunse area mein chahiye?"
+                )
+                # Save awaiting_area state now
+                self.USER_SESSIONS[user_id] = {
+                    "status": "awaiting_area",
+                    "service": prev_service,
+                    "city": city_input,
+                    "language": prev_language
+                }
+                return {
+                    "status": "need_area",
+                    "step": "intent",
+                    "error": "Missing Area",
+                    "message": area_msg,
+                    "suggested_areas": popular_areas,
+                    "city": city_input,
+                    "service": prev_service,
+                    "language": prev_language
+                }
+            else:
+                # Not a recognized city — fall through to Gemini to handle as new request
+                from agents.gemini_service import detect_intent_gemini
+                gemini_data = detect_intent_gemini(user_input)
+                intent_out = {}
+                if gemini_data:
+                    intent_out = {
+                        "service_type": gemini_data.get("service"),
+                        "location": gemini_data.get("area"),
+                        "time": "immediate",
+                        "urgency": gemini_data.get("urgency", "normal"),
+                        "confidence": gemini_data.get("confidence", 1.0),
+                        "detected_city": gemini_data.get("city"),
+                        "language": gemini_data.get("language", "roman_urdu")
+                    }
         else:
             # ==========================================
             # 1. INTENT AGENT (Gemini with Fallback)
@@ -137,21 +190,40 @@ class ServiceOrchestrator:
                 
                 urgency = gemini_data.get("urgency", "normal")
                 confidence = gemini_data.get("confidence", 1.0)
+                detected_language = gemini_data.get("language", "roman_urdu")
                 
-                preferred_city = extracted_city or user_details.get("preferred_city")
+                # ---- Helper: pick response text based on detected language ----
+                def t(en_text, ru_text):
+                    return en_text if detected_language == "english" else ru_text
+                
+                ALL_CITIES = ["Karachi", "Lahore", "Islamabad", "Rawalpindi", "Faisalabad"]
                 
                 if not extracted_service:
                     intent_out = {
                         "error": "Service not detected",
-                        "clarification": "Aapko konsi service chahiye? Plumber, Electrician, AC, Carpenter, ya Painter?"
+                        "clarification": t(
+                            "Which service do you need? Plumber, Electrician, AC Technician, Carpenter, or Painter?",
+                            "Aapko konsi service chahiye? Plumber, Electrician, AC, Carpenter, ya Painter?"
+                        )
                     }
-                elif not extracted_location and not preferred_city:
+                
+                elif not extracted_city:
+                    # FIX: No city mentioned in message → ALWAYS ask for city first.
+                    # preferred_city from profile is NOT used to skip this question.
                     intent_out = {
-                        "error": "Location not detected",
-                        "clarification": "Aap ka area konsa hai? (e.g., G-13, Johar Town, DHA)"
+                        "error": "Missing City",
+                        "clarification": t(
+                            "Which city do you need the service in?",
+                            "Aap kaunse sheher mein hain?"
+                        ),
+                        "suggested_cities": ALL_CITIES,
+                        "service": extracted_service,
+                        "language": detected_language
                     }
-                elif not extracted_location and preferred_city:
-                    city_lower = preferred_city.lower()
+                
+                elif not extracted_location:
+                    # City known, area missing → ask for area in that city
+                    city_lower = extracted_city.lower()
                     if city_lower == "karachi": popular_areas = ["DHA", "Malir", "Chorangi", "Gulshan-e-Iqbal", "Clifton", "Nazimabad", "Korangi", "North Karachi", "Other"]
                     elif city_lower == "lahore": popular_areas = ["Johar Town", "DHA", "Gulberg", "Model Town", "Wapda Town", "Garden Town", "Defence", "Other"]
                     elif city_lower == "islamabad": popular_areas = ["G-13", "F-10", "Blue Area", "I-8", "G-11", "F-7", "E-11", "Other"]
@@ -161,17 +233,22 @@ class ServiceOrchestrator:
                     
                     intent_out = {
                         "error": "Missing Area",
-                        "clarification": "Pehle area select karein. " + preferred_city.title() + " ke kaunse area mein chahiye?",
+                        "clarification": t(
+                            f"Which area of {extracted_city.title()} do you need the service in?",
+                            f"Pehle area select karein. {extracted_city.title()} ke kaunse area mein chahiye?"
+                        ),
                         "suggested_areas": popular_areas,
-                        "city": preferred_city,
-                        "service": extracted_service
+                        "city": extracted_city,
+                        "service": extracted_service,
+                        "language": detected_language
                     }
+                
                 else:
                     if extracted_location:
                         extracted_location = extracted_location.title().replace("Dha", "DHA")
                         
-                    if extracted_location and preferred_city and preferred_city.lower() not in extracted_location.lower():
-                        full_loc = f"{extracted_location}, {preferred_city}"
+                    if extracted_location and extracted_city and extracted_city.lower() not in extracted_location.lower():
+                        full_loc = f"{extracted_location}, {extracted_city}"
                     else:
                         full_loc = extracted_location
                         
@@ -180,14 +257,16 @@ class ServiceOrchestrator:
                         "location": full_loc,
                         "time": "immediate",
                         "urgency": urgency,
-                        "confidence": confidence
+                        "confidence": confidence,
+                        "detected_city": extracted_city,
+                        "language": detected_language
                     }
                 
                 intent_log = {
                     "timestamp": datetime.now().isoformat(),
                     "agent_name": "Intent_Agent_Gemini",
                     "input": user_input,
-                    "reasoning": "Extracted via Google Gemini API.",
+                    "reasoning": f"Extracted via Google Gemini API. Language detected: {detected_language}.",
                     "output": intent_out
                 }
                 self.execution_log.append(intent_log)
@@ -199,23 +278,32 @@ class ServiceOrchestrator:
             # Check Intent Error
             if "error" in intent_out:
                 is_missing_area = intent_out.get("error") == "Missing Area"
+                is_missing_city = intent_out.get("error") == "Missing City"
                 
                 if is_missing_area:
-                    # Save to memory context for the next turn
                     self.USER_SESSIONS[user_id] = {
                         "status": "awaiting_area",
                         "service": intent_out.get("service"),
-                        "city": intent_out.get("city")
+                        "city": intent_out.get("city"),
+                        "language": intent_out.get("language", "roman_urdu")
+                    }
+                elif is_missing_city:
+                    self.USER_SESSIONS[user_id] = {
+                        "status": "awaiting_city",
+                        "service": intent_out.get("service"),
+                        "language": intent_out.get("language", "roman_urdu")
                     }
                     
                 return {
-                    "status": "need_area" if is_missing_area else "failed",
+                    "status": "need_area" if is_missing_area else ("need_city" if is_missing_city else "failed"),
                     "step": "intent", 
                     "error": intent_out.get("error"), 
                     "message": intent_out.get("clarification", "Aapko kis ilaqay mein service chahiye?"),
                     "suggested_areas": intent_out.get("suggested_areas", []),
+                    "suggested_cities": intent_out.get("suggested_cities", []),
                     "city": intent_out.get("city"),
-                    "service": intent_out.get("service")
+                    "service": intent_out.get("service"),
+                    "language": intent_out.get("language", "roman_urdu")
                 }
             
         service_type = intent_out.get("service_type")
@@ -260,7 +348,8 @@ class ServiceOrchestrator:
         # 3. PROVIDER AGENT
         # ==========================================
         city_for_provider = detected_city if detected_city else preferred_city
-        provider_log = self.provider_agent.execute(service_type, user_coords, requested_time, city_for_provider)
+        urgency = intent_out.get("urgency", "medium")
+        provider_log = self.provider_agent.execute(service_type, user_coords, requested_time, city_for_provider, urgency)
         self.execution_log.append(provider_log)
         prov_out = provider_log.get("output", {})
         
@@ -274,22 +363,40 @@ class ServiceOrchestrator:
             }
             
         top_providers = prov_out.get("top_providers", [])
+        lang = intent_out.get("language", "roman_urdu")
         if not top_providers:
+            no_prov_msg = (
+                f"Sorry, no providers found in this area. Try a nearby area?"
+                if lang == "english" else
+                f"Sorry, is area mein koi provider nahi mila. Koi aur area try karein?"
+            )
             return {
                 "status": "failed", 
                 "step": "provider", 
                 "error": "No providers", 
-                "message": "Sorry, no providers found. Try nearby area?"
+                "message": no_prov_msg
             }
             
+        # Enrich providers with phone number from original DB record (not in scoring output)
+        for p in top_providers:
+            original = next((db_p for db_p in MOCK_PROVIDERS_DB if db_p["id"] == p["id"]), {})
+            p["phone"] = original.get("phone", "0300-XXXXXXX")
+
         # ==========================================
         # 4. SHOW PROVIDERS TO USER (WAIT FOR SELECTION)
         # ==========================================
         # Instead of auto-booking, we return the top providers and prompt the user.
+        area_label = loc_out.get('formatted', '').split(',')[0]
+        city_label = detected_city.title() if detected_city else 'your area'
+        provider_msg = (
+            f"We found these {service_type.replace('_', ' ')}s in {city_label} [{area_label}]:"
+            if lang == "english" else
+            f"Humne {detected_city.title() if detected_city else 'aapke ilaqay'} [{area_label}] mein yeh providers dhoonde hain:"
+        )
         return {
             "status": "show_providers",
             "step": "Provider Selection",
-            "message": f"Humne {detected_city.title() if detected_city else 'aapke ilaqay'} [{loc_out.get('formatted', '').split(',')[0]}] mein yeh providers dhoonde hain:",
+            "message": provider_msg,
             "providers": top_providers,
             "service_details": {"service": service_type, "location": loc_out.get("formatted")},
             "total_agents_run": len(self.execution_log)
